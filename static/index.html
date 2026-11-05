@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SolarCast UA — прогноз вироблення сонячної станції</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2316233b'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%23eda100'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Unbounded:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: light;
+  --surface: #f4f7fb;
+  --card: #ffffff;
+  --ink: #16233b;
+  --ink-2: #4a5872;
+  --ink-3: #6b778d;
+  --line: #d9e0ea;
+  --energy: #eda100;        /* the one data colour: energy from the sun */
+  --energy-soft: #eda10026;
+  --action: #1f4fbf;
+  --action-ink: #ffffff;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --critical: #d03b3b;
+  --display: "Unbounded", "Golos Text", system-ui, sans-serif;
+  --body: "Golos Text", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface: #101a2c;
+    --card: #17233a;
+    --ink: #eef2f8;
+    --ink-2: #b5c0d3;
+    --ink-3: #8e9bb3;
+    --line: #2a3853;
+    --energy: #c98500;
+    --energy-soft: #c9850033;
+    --action: #8fb1ff;
+    --action-ink: #101a2c;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--surface); color: var(--ink);
+  font: 400 16px/1.5 var(--body);
+}
+.page { max-width: 1180px; margin: 0 auto; padding: 28px 16px 64px; }
+header { margin-bottom: 24px; }
+header h1 { font: 700 26px/1.15 var(--display); margin: 0 0 6px; letter-spacing: -0.01em; }
+header p { margin: 0; color: var(--ink-2); max-width: 62ch; }
+
+.layout { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 920px) {
+  .layout { grid-template-columns: 300px minmax(0, 1fr); align-items: start; }
+  .panel { position: sticky; top: 16px; }
+}
+.panel, .block {
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px;
+}
+.block + .block { margin-top: 16px; }
+h2 { font: 600 17px/1.3 var(--body); margin: 0 0 12px; }
+
+label { display: block; font-weight: 500; font-size: 14px; margin: 14px 0 5px; }
+.panel label:first-of-type { margin-top: 0; }
+.hint { font-weight: 400; color: var(--ink-3); }
+input[type="text"], input[type="number"], select {
+  width: 100%; font: inherit; color: inherit; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px;
+}
+input[type="range"] { width: 100%; accent-color: var(--action); }
+:is(input, select, button, [tabindex]):focus-visible { outline: 3px solid var(--action); outline-offset: 2px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
+button.primary {
+  width: 100%; margin-top: 18px; font: 600 15px var(--body); cursor: pointer;
+  background: var(--action); color: var(--action-ink); border: 0; border-radius: 10px; padding: 12px 14px;
+}
+button.primary:disabled { opacity: .6; cursor: progress; }
+
+.search { position: relative; }
+.options {
+  position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px;
+  list-style: none; background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 10px 28px #16233b24;
+}
+.options[hidden] { display: none; }
+.options button {
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  background: none; border: 0; border-radius: 7px; padding: 8px 9px;
+}
+.options button:hover, .options button:focus-visible { background: var(--surface); }
+.options small { color: var(--ink-3); display: block; }
+
+.lead { font: 700 clamp(26px, 4.4vw, 40px)/1.12 var(--display); letter-spacing: -0.02em; margin: 0 0 4px; }
+.lead span { white-space: nowrap; }
+.sub { color: var(--ink-2); margin: 0 0 14px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0; padding: 0; }
+.facts div { min-width: 130px; }
+.facts dt { color: var(--ink-3); font-size: 14px; }
+.facts dd { margin: 0; font-weight: 600; font-size: 18px; }
+
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { font: 400 12px var(--body); fill: var(--ink-3); }
+.chart .val { fill: var(--ink); font-weight: 600; font-size: 13px; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .bar { fill: var(--energy); }
+.chart .day { cursor: pointer; }
+.chart .day text.on { fill: var(--ink); font-weight: 600; }
+.chart .mark { fill: var(--ink); }
+.chart .area { fill: var(--energy-soft); }
+.chart .line { fill: none; stroke: var(--energy); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .window { fill: var(--ink); opacity: .06; }
+.chart .cross { stroke: var(--ink-3); stroke-width: 1; }
+.chart .dot { fill: var(--energy); stroke: var(--card); stroke-width: 2; }
+.tip {
+  position: absolute; pointer-events: none; z-index: 3; min-width: 150px;
+  background: var(--ink); color: var(--card); border-radius: 9px; padding: 8px 10px; font-size: 13px; line-height: 1.35;
+  transform: translate(-50%, calc(-100% - 12px));
+}
+.tip[hidden] { display: none; }
+.tip b { display: block; font-size: 14px; }
+
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14.5px; min-width: 620px; }
+th { text-align: left; font-weight: 500; color: var(--ink-3); padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); }
+td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+tr:last-child td { border-bottom: 0; }
+tr.sel td { background: var(--surface); }
+td.num, th.num { text-align: right; }
+.rate { display: inline-flex; align-items: center; gap: 7px; }
+.rate i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.rate.good i { background: var(--good); }
+.rate.medium i { background: var(--warning); }
+.rate.poor i { background: none; box-shadow: inset 0 0 0 2px var(--critical); }
+
+.plan-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.plan-head h2 { margin: 0; }
+button.ghost {
+  font: 600 14px var(--body); cursor: pointer; color: var(--action); background: none;
+  border: 1.5px solid var(--action); border-radius: 9px; padding: 8px 14px;
+}
+button.ghost:disabled { opacity: .6; cursor: progress; }
+.advice h3 { font: 600 20px/1.25 var(--body); margin: 14px 0 6px; }
+.advice p { margin: 0 0 12px; max-width: 70ch; }
+.advice ul { margin: 0 0 14px; padding: 0; list-style: none; }
+.advice li { padding: 9px 0; border-top: 1px solid var(--line); }
+.advice li b { display: block; }
+.advice li span { color: var(--ink-2); }
+.advice h4 { font: 600 15px var(--body); margin: 16px 0 2px; }
+.warn li { padding-left: 14px; border-left: 3px solid var(--warning); border-top: 0; margin-top: 8px; }
+.source { color: var(--ink-3); font-size: 14px; margin: 0; }
+.muted { color: var(--ink-3); }
+.error { color: var(--critical); font-weight: 500; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>SolarCast UA</h1>
+    <p>Скільки електроенергії дасть ваша сонячна станція найближчі сім днів і коли її найвигідніше використати.</p>
+  </header>
+
+  <div class="layout">
+    <form class="panel" id="form" autocomplete="off">
+      <h2>Ваша станція</h2>
+
+      <label for="city">Населений пункт</label>
+      <div class="search">
+        <input type="text" id="city" role="combobox" aria-expanded="false" aria-controls="options" placeholder="Почніть вводити назву" value="Київ">
+        <ul class="options" id="options" role="listbox" hidden></ul>
+      </div>
+
+      <label for="kwp">Потужність панелей, кВт</label>
+      <input type="number" id="kwp" min="0.1" max="100" step="0.1" value="3">
+
+      <label for="tilt">Нахил панелей: <output id="tiltOut">35</output>°</label>
+      <input type="range" id="tilt" min="0" max="90" step="5" value="35">
+
+      <label for="azimuth">Куди дивляться панелі</label>
+      <select id="azimuth">
+        <option value="0">Південь</option>
+        <option value="-45">Південний схід</option>
+        <option value="45">Південний захід</option>
+        <option value="-90">Схід</option>
+        <option value="90">Захід</option>
+      </select>
+
+      <div class="row2">
+        <div>
+          <label for="battery">Акумулятор, кВт·год</label>
+          <input type="number" id="battery" min="0" max="200" step="0.5" value="5">
+        </div>
+        <div>
+          <label for="losses">Втрати, %</label>
+          <input type="number" id="losses" min="0" max="50" step="1" value="14">
+        </div>
+      </div>
+
+      <label for="tariff">Тариф, грн за кВт·год</label>
+      <input type="number" id="tariff" min="0" max="100" step="0.01" value="4.32">
+
+      <button class="primary" id="go" type="submit">Показати прогноз</button>
+    </form>
+
+    <main id="out" aria-live="polite">
+      <div class="block"><p class="muted" id="status">Завантажую прогноз…</p></div>
+    </main>
+  </div>
+</div>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const nf = (n, d = 1) => Number(n).toLocaleString('uk-UA', { minimumFractionDigits: d, maximumFractionDigits: d });
+const dayShort = new Intl.DateTimeFormat('uk-UA', { weekday: 'short' });
+const dayLong = new Intl.DateTimeFormat('uk-UA', { weekday: 'long', day: 'numeric', month: 'long' });
+const dayNum = new Intl.DateTimeFormat('uk-UA', { day: 'numeric', month: 'short' });
+const asDate = iso => new Date(iso + 'T12:00:00');
+const cap = s => s[0].toUpperCase() + s.slice(1);
+const RATE = { good: 'добрий', medium: 'середній', poor: 'слабкий' };
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const state = { loc: { name: 'Київ', lat: 50.45466, lon: 30.5238 }, data: null, day: 0 };
+
+/* ---------- place search ---------- */
+const city = $('#city'), options = $('#options');
+let searchTimer;
+city.addEventListener('input', () => {
+  state.loc = null;
+  clearTimeout(searchTimer);
+  const q = city.value.trim();
+  if (q.length < 2) return closeOptions();
+  searchTimer = setTimeout(async () => {
+    try {
+      const r = await fetch('/api/geocode?q=' + encodeURIComponent(q));
+      if (!r.ok) throw new Error();
+      const { results } = await r.json();
+      options.innerHTML = results.length
+        ? results.map((p, i) => `<li role="option"><button type="button" data-i="${i}">${esc(p.name)}<small>${esc([p.region, p.country].filter(Boolean).join(', '))}</small></button></li>`).join('')
+        : '<li class="muted" style="padding:8px 9px">Нічого не знайдено. Спробуйте іншу назву.</li>';
+      options._results = results;
+      options.hidden = false; city.setAttribute('aria-expanded', 'true');
+    } catch { closeOptions(); }
+  }, 250);
+});
+options.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const p = options._results[+b.dataset.i];
+  state.loc = { name: p.name, lat: p.lat, lon: p.lon };
+  city.value = [p.name, p.region].filter(Boolean).join(', ');
+  closeOptions();
+});
+function closeOptions() { options.hidden = true; city.setAttribute('aria-expanded', 'false'); }
+document.addEventListener('click', e => { if (!e.target.closest('.search')) closeOptions(); });
+city.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeOptions();
+  if (e.key === 'ArrowDown' && !options.hidden) { e.preventDefault(); $('button', options)?.focus(); }
+});
+
+$('#tilt').addEventListener('input', e => $('#tiltOut').textContent = e.target.value);
+
+/* ---------- forecast ---------- */
+$('#form').addEventListener('submit', e => { e.preventDefault(); load(); });
+
+async function load() {
+  const out = $('#out'), go = $('#go');
+  if (!state.loc) {
+    out.innerHTML = '<div class="block"><p class="error">Оберіть населений пункт зі списку підказок.</p></div>';
+    city.focus(); return;
+  }
+  go.disabled = true; go.textContent = 'Рахую…';
+  const q = new URLSearchParams({
+    lat: state.loc.lat, lon: state.loc.lon, name: state.loc.name,
+    kwp: $('#kwp').value, tilt: $('#tilt').value, azimuth: $('#azimuth').value,
+    losses: $('#losses').value, battery_kwh: $('#battery').value || 0, tariff: $('#tariff').value,
+  });
+  try {
+    const r = await fetch('/api/forecast?' + q);
+    const body = await r.json();
+    if (!r.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Перевірте значення у формі.');
+    state.data = body;
+    state.day = body.days.findIndex(d => d.date === body.totals.best_day);
+    render();
+  } catch (err) {
+    out.innerHTML = `<div class="block"><p class="error">Не вдалося отримати прогноз. ${esc(err.message)}</p><p class="muted">Спробуйте ще раз за хвилину.</p></div>`;
+  } finally {
+    go.disabled = false; go.textContent = 'Показати прогноз';
+  }
+}
+
+function render() {
+  const d = state.data, t = d.totals, best = d.days.find(x => x.date === t.best_day);
+  $('#out').innerHTML = `
+    <section class="block">
+      <p class="lead">За 7 днів <span>${nf(t.kwh)} кВт·год</span></p>
+      <p class="sub">${esc(d.location.name)}, станція ${nf(d.system.kwp)} кВт. Дані Open-Meteo${d.source.cached ? ' (з кешу)' : ''}.</p>
+      <dl class="facts">
+        <div><dt>Найкращий день</dt><dd>${dayShort.format(asDate(best.date))}, ${nf(best.kwh)} кВт·год</dd></div>
+        <div><dt>У середньому за день</dt><dd>${nf(t.avg_kwh_per_day)} кВт·год</dd></div>
+        <div><dt>Економія за тарифом</dt><dd>${nf(t.savings_uah, 0)} грн</dd></div>
+      </dl>
+    </section>
+    <section class="block">
+      <h2>Вироблення по днях</h2>
+      <div class="chart" id="bars"></div>
+    </section>
+    <section class="block">
+      <h2 id="hourTitle"></h2>
+      <div class="chart" id="hours"></div>
+    </section>
+    <section class="block">
+      <h2>Усі дні в таблиці</h2>
+      <div class="scroll" id="table"></div>
+    </section>
+    <section class="block">
+      <div class="plan-head">
+        <h2>План на тиждень</h2>
+        <button class="ghost" id="adviceBtn" type="button">Скласти план</button>
+      </div>
+      <div class="advice" id="advice"><p class="muted">Порадник пояснить простими словами, коли заряджати акумулятор і вмикати енергоємні прилади.</p></div>
+    </section>`;
+  drawBars(); drawHours(); drawTable();
+  $('#adviceBtn').addEventListener('click', loadAdvice);
+}
+
+function selectDay(i) { state.day = i; drawBars(); drawHours(); drawTable(); }
+
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const p = 10 ** Math.floor(Math.log10(v)), m = v / p;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+}
+// charts are drawn at the container's own width so labels stay 12px on a phone
+const chartWidth = host => Math.max(320, Math.min(720, host.clientWidth || 720));
+function tipAt(host, x, y, html) {
+  const tip = $('.tip', host);
+  tip.innerHTML = html; tip.hidden = false;
+  const w = host.clientWidth, s = w / chartWidth(host);
+  tip.style.left = Math.min(Math.max(x * s, 80), w - 80) + 'px';
+  tip.style.top = y * s + 'px';
+}
+
+/* ---------- chart 1: one bar per day ---------- */
+function drawBars() {
+  const days = state.data.days, host = $('#bars');
+  const W = chartWidth(host), narrow = W < 520, H = 250, L = 44, R = 8, T = 22, B = 46;
+  const max = niceMax(Math.max(...days.map(d => d.kwh)));
+  const step = (W - L - R) / days.length, bw = Math.min(58, step - 14);
+  const y = v => T + (H - T - B) * (1 - v / max);
+  const bestKwh = Math.max(...days.map(d => d.kwh));
+  let g = '';
+  for (let k = 0; k <= 2; k++) {
+    const v = max * k / 2;
+    g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${nf(v, max < 4 ? 1 : 0)}</text>`;
+  }
+  days.forEach((d, i) => {
+    const x = L + step * i + (step - bw) / 2, top = y(d.kwh), h = H - B - top, r = Math.min(4, h);
+    const on = i === state.day, dt = asDate(d.date);
+    const bar = h > 0.5 ? `<path class="bar" d="M${x},${H - B} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${H - B} Z"/>` : '';
+    const val = on || d.kwh === bestKwh ? `<text class="val" x="${x + bw / 2}" y="${top - 7}" text-anchor="middle">${nf(d.kwh)}</text>` : '';
+    g += `<g class="day" tabindex="0" role="button" data-i="${i}" aria-pressed="${on}" aria-label="${dayLong.format(dt)}: ${nf(d.kwh)} кВт·год">
+      <rect x="${L + step * i}" y="${T - 14}" width="${step}" height="${H - T + 14}" fill="transparent"/>
+      ${bar}${val}
+      <text class="${on ? 'on' : ''}" x="${x + bw / 2}" y="${H - B + 18}" text-anchor="middle">${dayShort.format(dt)}</text>
+      <text class="${on ? 'on' : ''}" x="${x + bw / 2}" y="${H - B + 33}" text-anchor="middle">${narrow ? dt.getDate() : dayNum.format(dt)}</text>
+      ${on ? `<rect class="mark" x="${x}" y="${H - B + 39}" width="${bw}" height="3" rx="1.5"/>` : ''}
+    </g>`;
+  });
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="group" aria-label="Вироблення по днях, кВт·год. Оберіть день, щоб побачити його по годинах.">
+    <text x="${L - 8}" y="10" text-anchor="end">кВт·год</text>${g}</svg><div class="tip" hidden></div>`;
+  host.querySelectorAll('.day').forEach(el => {
+    const i = +el.dataset.i, d = days[i];
+    const show = () => tipAt(host, L + step * i + step / 2, y(d.kwh),
+      `<b>${dayLong.format(asDate(d.date))}</b>${nf(d.kwh)} кВт·год, пік ${nf(d.peak_kw, 2)} кВт<br>день ${RATE[d.rating]}`);
+    el.addEventListener('pointerenter', show);
+    el.addEventListener('focus', show);
+    el.addEventListener('pointerleave', () => $('.tip', host).hidden = true);
+    el.addEventListener('blur', () => $('.tip', host).hidden = true);
+    el.addEventListener('click', () => selectDay(i));
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectDay(i); } });
+  });
+}
+
+/* ---------- chart 2: the selected day hour by hour ---------- */
+function drawHours() {
+  const d = state.data.days[state.day], host = $('#hours');
+  const hrs = state.data.hourly.filter(h => h.time.startsWith(d.date));
+  $('#hourTitle').textContent = `${cap(dayLong.format(asDate(d.date)))} по годинах`;
+  const W = chartWidth(host), narrow = W < 520, H = 270, L = 44, R = 12, T = 26, B = 34;
+  const max = niceMax(Math.max(0.1, ...hrs.map(h => h.power_kw)));
+  const x = h => L + (W - L - R) * h / 24, y = v => T + (H - T - B) * (1 - v / max);
+  // an hourly value is the mean of the hour ending at its timestamp: plot it mid-hour
+  // (the value stamped 00:00 belongs to the previous evening, so the day starts at 01:00)
+  const pts = hrs.filter(h => h.time.slice(11, 13) !== '00').map(h => [x(+h.time.slice(11, 13) - 0.5), y(h.power_kw), h]);
+  const hm = s => +s.slice(0, 2) + +s.slice(3, 5) / 60;
+  let g = '';
+  for (let k = 0; k <= 2; k++) {
+    const v = max * k / 2;
+    g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${nf(v, max < 4 ? 1 : 0)}</text>`;
+  }
+  for (let h = 0; h <= 24; h += narrow ? 6 : 3) g += `<text x="${x(h)}" y="${H - B + 18}" text-anchor="${h === 24 ? 'end' : 'middle'}">${String(h).padStart(2, '0')}:00</text>`;
+  if (d.best_window) {
+    const a = x(hm(d.best_window.from)), b = x(hm(d.best_window.to));
+    g += `<rect class="window" x="${a}" y="${T}" width="${b - a}" height="${H - T - B}" rx="4"/>
+          <text x="${(a + b) / 2}" y="${T - 8}" text-anchor="middle">найкращі 3 години: ${nf(d.best_window.kwh)} кВт·год</text>`;
+  }
+  const path = [[x(0), pts[0][1]], ...pts, [x(24), pts.at(-1)[1]]];
+  const line = path.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  const area = `${line} L${x(24)},${y(0)} L${x(0)},${y(0)} Z`;
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Потужність станції по годинах, кВт. Схід о ${d.sunrise}, захід о ${d.sunset}, пік ${nf(d.peak_kw, 2)} кВт${d.peak_time ? ' о ' + d.peak_time : ''}.">
+    <text x="${L - 8}" y="10" text-anchor="end">кВт</text>${g}
+    <path class="area" d="${area}"/><path class="line" d="${line}"/>
+    <line class="cross" y1="${T}" y2="${H - B}" visibility="hidden"/><circle class="dot" r="5" visibility="hidden"/>
+    <rect class="hit" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="transparent"/>
+  </svg><div class="tip" hidden></div>
+  <p class="muted" style="margin:6px 0 0">Сонце сходить о ${d.sunrise} і заходить о ${d.sunset}.${d.battery ? ' Акумулятор за день зарядиться на ' + d.battery.charged_pct + '%' + (d.battery.full_at ? ', повний о ' + d.battery.full_at : '') + '.' : ''}</p>`;
+  const svg = $('svg', host), cross = $('.cross', host), dot = $('.dot', host);
+  const move = e => {
+    const box = svg.getBoundingClientRect(), px = (e.clientX - box.left) / box.width * W;
+    const p = pts.reduce((a, b) => Math.abs(b[0] - px) < Math.abs(a[0] - px) ? b : a);
+    cross.setAttribute('x1', p[0]); cross.setAttribute('x2', p[0]); cross.setAttribute('visibility', 'visible');
+    dot.setAttribute('cx', p[0]); dot.setAttribute('cy', p[1]); dot.setAttribute('visibility', 'visible');
+    const hh = +p[2].time.slice(11, 13);
+    tipAt(host, p[0], p[1], `<b>${String((hh + 23) % 24).padStart(2, '0')}:00–${String(hh).padStart(2, '0')}:00</b>${nf(p[2].power_kw, 2)} кВт<br>хмарність ${p[2].cloud ?? '—'}%, ${p[2].temp == null ? '—' : nf(p[2].temp, 0)} °C`);
+  };
+  $('.hit', host).addEventListener('pointermove', move);
+  $('.hit', host).addEventListener('pointerleave', () => {
+    cross.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); $('.tip', host).hidden = true;
+  });
+}
+
+/* ---------- table view of the same data ---------- */
+function drawTable() {
+  const d = state.data, hasBattery = d.system.battery_kwh > 0;
+  $('#table').innerHTML = `<table>
+    <thead><tr><th>День</th><th class="num">кВт·год</th><th>Оцінка</th><th>Найкращі години</th><th class="num">Пік, кВт</th><th class="num">Хмарність</th>${hasBattery ? '<th class="num">Акумулятор</th>' : ''}</tr></thead>
+    <tbody>${d.days.map((x, i) => `<tr class="${i === state.day ? 'sel' : ''}">
+      <td>${dayShort.format(asDate(x.date))}, ${dayNum.format(asDate(x.date))}</td>
+      <td class="num">${nf(x.kwh)}</td>
+      <td><span class="rate ${x.rating}"><i></i>${RATE[x.rating]}</span></td>
+      <td>${x.best_window ? x.best_window.from + '–' + x.best_window.to : '—'}</td>
+      <td class="num">${nf(x.peak_kw, 2)}</td>
+      <td class="num">${x.cloud_daylight_pct == null ? '—' : x.cloud_daylight_pct + '%'}</td>
+      ${hasBattery ? `<td class="num">${x.battery.charged_pct}%${x.battery.full_at ? ' о ' + x.battery.full_at : ''}</td>` : ''}
+    </tr>`).join('')}</tbody></table>`;
+}
+
+/* ---------- advice ---------- */
+async function loadAdvice() {
+  const btn = $('#adviceBtn'), box = $('#advice'), d = state.data;
+  btn.disabled = true; btn.textContent = 'Складаю план…';
+  box.innerHTML = '<p class="muted">Складаю план…</p>';
+  try {
+    const r = await fetch('/api/advice', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location: d.location, system: d.system, days: d.days, totals: d.totals }),
+    });
+    if (!r.ok) throw new Error();
+    const res = await r.json(), a = res.advice;
+    box.innerHTML = `
+      <h3>${esc(a.headline)}</h3>
+      <p>${esc(a.summary)}</p>
+      ${a.appliance_plan.length ? `<h4>Що і коли вмикати</h4><ul>${a.appliance_plan.map(s => `<li><b>${esc(s.appliance)}: ${esc(s.when)}</b><span>${esc(s.why)}</span></li>`).join('')}</ul>` : ''}
+      <h4>По днях</h4>
+      <ul>${a.days.map(t => `<li><b>${cap(dayLong.format(asDate(t.date)))}</b><span class="rate ${esc(t.verdict)}"><i></i>${esc(t.tip)}</span></li>`).join('')}</ul>
+      ${a.warnings.length ? `<h4>Зверніть увагу</h4><ul class="warn">${a.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+      <p class="source">${res.source === 'claude'
+        ? 'План склав Claude Opus 5.5 за цим прогнозом.'
+        : 'План складено за правилами, без ШІ: ' + esc(res.note) + '.'}</p>`;
+    btn.textContent = 'Скласти заново';
+  } catch {
+    box.innerHTML = '<p class="error">Не вдалося скласти план. Спробуйте ще раз.</p>';
+    btn.textContent = 'Скласти план';
+  } finally { btn.disabled = false; }
+}
+
+let resizeTimer;
+addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (state.data && $('#bars')) { drawBars(); drawHours(); } }, 150);
+});
+
+load();
+</script>
+</body>
+</html>
