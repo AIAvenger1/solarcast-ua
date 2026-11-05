@@ -122,7 +122,13 @@ class _StubClient:
         self.beta = type("Beta", (), {"messages": messages})()
 
 
+class _Usage:
+    input_tokens, output_tokens = 1200, 600
+
+
 class _Response:
+    model, usage = "claude-opus-5-5", _Usage()
+
     def __init__(self, parsed, stop_reason="end_turn"):
         self.parsed_output, self.stop_reason = parsed, stop_reason
 

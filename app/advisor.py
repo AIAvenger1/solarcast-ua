@@ -108,6 +108,10 @@ async def ai_advice(payload: dict) -> Advice:
         messages=[{"role": "user", "content": _user_prompt(payload)}],
         output_format=Advice,
     )
+    u = response.usage
+    # token counts make the cost of a call visible in the server log
+    logging.getLogger("uvicorn.error").info(
+        "Claude usage: model=%s input=%s output=%s", response.model, u.input_tokens, u.output_tokens)
     if response.stop_reason == "refusal":
         raise RuntimeError("модель відхилила запит")
     if response.stop_reason == "max_tokens" or response.parsed_output is None:
