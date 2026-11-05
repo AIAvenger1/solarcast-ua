@@ -6,7 +6,9 @@ PoC-проєкт з інтеграцією хмарних API та API моде�
 
 ![Головний екран](docs/main.png)
 
-Демо-відео: [`docs/demo.mp4`](docs/demo.mp4) (50 с), план у ньому складає Claude.
+Працює тут: https://solarcast.trelawney.tech
+
+Демо-відео: [`docs/demo.mp4`](docs/demo.mp4) (50 с), записане з розгорнутого в хмарі сервісу; план у ньому складає Claude.
 
 ## Суть проєкту
 
@@ -49,7 +51,8 @@ PoC-проєкт з інтеграцією хмарних API та API моде�
 
 ```mermaid
 flowchart LR
-    B[Браузер<br>static/index.html] -->|REST / JSON| A[SolarCast API<br>FastAPI, Docker]
+    B[Браузер<br>static/index.html] -->|HTTPS / JSON| P[Caddy<br>HTTPS, Hetzner Cloud VM]
+    P --> A[SolarCast API<br>FastAPI, Docker]
     A -->|назва → координати| G[Open-Meteo<br>Geocoding API]
     A -->|tilt, azimuth → радіація по годинах| F[Open-Meteo<br>Forecast API]
     A -->|прогноз по днях + JSON-схема| C[Claude API<br>Messages]
@@ -103,7 +106,7 @@ uv run python scripts/record_demo.py
 ## Розгортання на хмарній VM (Hetzner Cloud)
 
 Сервіс розгорнуто на VM Hetzner Cloud (CX23, Гельсінкі, Ubuntu 26.04):
-https://solarcast.2-29-167-169.sslip.io
+https://solarcast.trelawney.tech
 
 Потрібна VM з Docker, відкритими портами 80 і 443 та доступом по SSH:
 
