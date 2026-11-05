@@ -8,8 +8,6 @@
 from __future__ import annotations
 
 import re
-import time
-from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
@@ -21,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import advisor, openmeteo
+from .limits import WindowLimiter
 from .solar import System, build_forecast
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -100,34 +99,22 @@ async def forecast(request: Request, q: Annotated[Station, Query()]):
     return await compute(request, q)
 
 
-# /api/advice can spend money on the model, so it is rate-limited per client address.
-# (In-memory and per-process: enough for a PoC; behind a proxy use the forwarded address
-# and a shared store.)
+# /api/advice can spend money on the model, so it is rate-limited per client address
+# (see app/limits.py for what "per client" means in this PoC).
 ADVICE_LIMIT = 6
 ADVICE_WINDOW_S = 10 * 60
-_advice_calls: dict[str, deque] = defaultdict(deque)
-
-
-def check_rate_limit(client_ip: str) -> None:
-    now = time.monotonic()
-    calls = _advice_calls[client_ip]
-    while calls and now - calls[0] > ADVICE_WINDOW_S:
-        calls.popleft()
-    if len(calls) >= ADVICE_LIMIT:
-        raise HTTPException(429, "Забагато запитів плану. Спробуйте за кілька хвилин.")
-    calls.append(now)
-    if len(_advice_calls) > 10_000:      # forget idle clients, keep the table bounded
-        for ip in [ip for ip, c in _advice_calls.items() if not c or now - c[-1] > ADVICE_WINDOW_S]:
-            del _advice_calls[ip]
+advice_limiter = WindowLimiter(ADVICE_LIMIT, ADVICE_WINDOW_S)
 
 
 @app.post("/api/advice")
 async def advice(request: Request, q: Station):
-    check_rate_limit(request.client.host if request.client else "unknown")
+    client = request.client.host if request.client else "unknown"
+    if not advice_limiter.allow(client):
+        raise HTTPException(429, "Забагато запитів плану. Спробуйте за кілька хвилин.")
     # The forecast is recomputed here (Open-Meteo answers come from the cache), so the
     # model only ever receives numbers this service produced. Hourly data is left out.
     f = await compute(request, q)
-    return await advisor.get_advice({k: f[k] for k in ("location", "system", "days", "totals")})
+    return await advisor.get_advice({k: f[k] for k in ("location", "system", "days", "totals")}, client)
 
 
 @app.get("/")

@@ -20,8 +20,8 @@ STATION = {"lat": 50.45, "lon": 30.52, "kwp": 3, "battery_kwh": 5, "name": "Ки
 @pytest.fixture
 def client():
     openmeteo._cache.clear()
-    main._advice_calls.clear()
-    advisor._ai_calls.update(day=None, count=0)
+    main.advice_limiter.reset()
+    advisor.quota.reset()
     with TestClient(app) as c:
         yield c
 
@@ -181,8 +181,29 @@ def test_advice_is_rate_limited_per_client(client, upstream, monkeypatch):
 
 def test_daily_cap_stops_model_calls(client, upstream, monkeypatch):
     monkeypatch.setenv("SOLARCAST_AI", "on")
-    monkeypatch.setattr(advisor, "DAILY_AI_CALLS", 2)
+    monkeypatch.setattr(advisor.quota, "total", 2)
     messages = _StubMessages(result=_Response(_advice()))
     monkeypatch.setattr(advisor, "_client", _StubClient(messages))
     sources = [client.post("/api/advice", json=STATION).json()["source"] for _ in range(4)]
     assert sources == ["claude", "claude", "rules", "rules"] and messages.calls == 2
+
+
+def test_one_client_cannot_spend_the_whole_daily_budget(client, upstream, monkeypatch):
+    monkeypatch.setenv("SOLARCAST_AI", "on")
+    monkeypatch.setattr(advisor.quota, "per_client", 2)
+    messages = _StubMessages(result=_Response(_advice()))
+    monkeypatch.setattr(advisor, "_client", _StubClient(messages))
+    answers = [client.post("/api/advice", json=STATION).json() for _ in range(3)]
+    assert [a["source"] for a in answers] == ["claude", "claude", "rules"]
+    assert "свій денний ліміт" in answers[2]["note"]
+    assert advisor.quota.reserve("another-client") is None      # others are unaffected
+
+
+def test_unbilled_failures_do_not_consume_the_budget(client, upstream, monkeypatch):
+    monkeypatch.setenv("SOLARCAST_AI", "on")
+    monkeypatch.setattr(advisor.quota, "total", 1)
+    err = anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+    monkeypatch.setattr(advisor, "_client", _StubClient(_StubMessages(error=err)))
+    for _ in range(3):
+        assert "з'єднання" in client.post("/api/advice", json=STATION).json()["note"]
+    assert advisor.quota.reserve("someone") is None             # the single slot is still free

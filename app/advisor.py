@@ -18,6 +18,8 @@ from typing import Literal
 import anthropic
 from pydantic import BaseModel, Field
 
+from .limits import DailyQuota
+
 log = logging.getLogger("solarcast.advisor")
 
 MODEL = "claude-opus-5-5"
@@ -25,19 +27,12 @@ MODEL = "claude-opus-5-5"
 # the API re-runs it on the model Anthropic recommends for that category.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 TIMEOUT_S = 60.0
-# Hard ceiling on paid model calls per day for the whole service; past it the rules answer.
-DAILY_AI_CALLS = int(os.environ.get("SOLARCAST_AI_DAILY_CALLS", "300"))
-_ai_calls = {"day": None, "count": 0}
-
-
-def _within_daily_budget() -> bool:
-    today = _date.today()
-    if _ai_calls["day"] != today:
-        _ai_calls.update(day=today, count=0)
-    if _ai_calls["count"] >= DAILY_AI_CALLS:
-        return False
-    _ai_calls["count"] += 1
-    return True
+# Daily ceilings on paid model calls: for the whole service and for one client, so a
+# single client cannot spend the whole budget. Past either one the rules answer.
+quota = DailyQuota(
+    total=int(os.environ.get("SOLARCAST_AI_DAILY_CALLS", "300")),
+    per_client=int(os.environ.get("SOLARCAST_AI_DAILY_CALLS_PER_CLIENT", "20")),
+)
 
 Verdict = Literal["good", "medium", "poor"]
 
@@ -187,7 +182,7 @@ def rule_advice(payload: dict) -> Advice:
     )
 
 
-async def get_advice(payload: dict) -> dict:
+async def get_advice(payload: dict, client: str = "unknown") -> dict:
     """Advice plus where it came from. Never raises: the rules are the safety net.
 
     `note` is shown to the user, so it only ever holds one of the fixed messages
@@ -195,27 +190,35 @@ async def get_advice(payload: dict) -> dict:
     """
     if not ai_enabled():
         note = "ШІ-порадника вимкнено"
-    elif not _within_daily_budget():
-        note = "вичерпано денний ліміт запитів до моделі"
+    elif (exhausted := quota.reserve(client)) is not None:
+        note = ("вичерпано денний ліміт запитів до моделі" if exhausted == "service"
+                else "ви вичерпали свій денний ліміт запитів до моделі")
     else:
+        billable = True          # a request that never produced a response costs nothing
         try:
             advice = await ai_advice(payload)
             return {"source": "claude", "model": MODEL, "note": None, "advice": advice.model_dump()}
         except anthropic.AuthenticationError:
+            billable = False
             note = "ключ Claude API недійсний"
         except anthropic.RateLimitError:
+            billable = False
             note = "перевищено ліміт запитів Claude API"
         except anthropic.APIStatusError as e:
             log.warning("Claude API status error %s", e.status_code)
             note = "Claude API тимчасово недоступний"
         except anthropic.APIConnectionError:
+            billable = False
             note = "немає з'єднання з Claude API"
         except Exception as e:
             # with no credentials at all the SDK raises before any request is sent
             if "authentication method" in str(e):
+                billable = False
                 note = "не задано ключ Claude API (змінна ANTHROPIC_API_KEY)"
             else:
                 log.exception("AI advice failed")
                 note = "ШІ-порадник тимчасово недоступний"
+        if not billable:
+            quota.refund(client)
         log.warning("AI advice unavailable, using rules: %s", note)
     return {"source": "rules", "model": None, "note": note, "advice": rule_advice(payload).model_dump()}
