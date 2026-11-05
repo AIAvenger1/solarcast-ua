@@ -1,0 +1,23 @@
+# SolarCast UA on a single cloud VM (tested layout: Hetzner Cloud, Ubuntu, Docker).
+# Runs beside other projects: one container, one port, nothing else on the host is touched.
+services:
+  solarcast:
+    build: .
+    image: solarcast-ua:latest
+    container_name: solarcast-ua
+    restart: unless-stopped
+    env_file: .env                 # ANTHROPIC_API_KEY and the daily call caps
+    ports:
+      - "${SOLARCAST_PORT:-8088}:8080"
+    read_only: true                # the service keeps no state on disk
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 300m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

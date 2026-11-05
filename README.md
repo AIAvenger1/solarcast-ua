@@ -100,6 +100,18 @@ uv run pytest
 uv run python scripts/record_demo.py
 ```
 
+## Розгортання на хмарній VM (Hetzner Cloud)
+
+Потрібна VM з Docker і доступ до неї по SSH:
+
+```bash
+./deploy/deploy.sh <ssh-хост> 8088      # копіює код і .env, збирає образ, запускає контейнер
+```
+
+Скрипт кладе все в `/opt/solarcast-ua`, запускає один контейнер (файлова система лише
+для читання, без привілеїв, ліміт пам'яті 300 МБ) і не чіпає інші сервіси на машині.
+Ключ копіюється у `.env` з правами 600. Зупинити: `docker compose -f /opt/solarcast-ua/compose.yml down`.
+
 ## Розгортання в хмарі (Google Cloud Run)
 
 Сервіс не зберігає стану, тому підходить для Cloud Run як є:
