@@ -17,4 +17,6 @@ USER solarcast
 # Cloud Run injects PORT; 8080 is its default and ours
 ENV PORT=8080
 EXPOSE 8080
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+# --proxy-headers: behind a reverse proxy the client address comes from X-Forwarded-For.
+# It is honoured only for proxies listed in FORWARDED_ALLOW_IPS (default: localhost).
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers"]

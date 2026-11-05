@@ -1,5 +1,6 @@
-# SolarCast UA on a single cloud VM (tested layout: Hetzner Cloud, Ubuntu, Docker).
-# Runs beside other projects: one container, one port, nothing else on the host is touched.
+# SolarCast UA on a single cloud VM (Hetzner Cloud, Ubuntu, Docker).
+# Caddy terminates HTTPS (certificates are issued automatically) and is the only
+# container reachable from the internet; the app listens on the internal network.
 services:
   solarcast:
     build: .
@@ -7,11 +8,13 @@ services:
     container_name: solarcast-ua
     restart: unless-stopped
     env_file: .env                 # ANTHROPIC_API_KEY and the daily call caps
-    ports:
-      - "${SOLARCAST_PORT:-8088}:8080"
+    environment:
+      # Only Caddy can reach this container, so its X-Forwarded-For is trusted:
+      # the per-client limits then see the real visitor address.
+      FORWARDED_ALLOW_IPS: "*"
+    expose: ["8080"]
     read_only: true                # the service keeps no state on disk
-    tmpfs:
-      - /tmp
+    tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     mem_limit: 300m
@@ -21,3 +24,27 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  caddy:
+    image: caddy:2
+    container_name: solarcast-caddy
+    restart: unless-stopped
+    depends_on: [solarcast]
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS, e.g. solarcast.example.com}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data           # issued certificates survive restarts
+      - caddy_config:/config
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 200m
+
+volumes:
+  caddy_data:
+  caddy_config:

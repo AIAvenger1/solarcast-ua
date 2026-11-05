@@ -1,0 +1,15 @@
+{$SITE_ADDRESS} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+	# request bodies here are a few hundred bytes of station parameters
+	request_body {
+		max_size 16KB
+	}
+	reverse_proxy solarcast:8080
+}
