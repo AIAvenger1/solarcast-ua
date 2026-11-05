@@ -186,7 +186,7 @@ def rule_advice(payload: dict) -> Advice:
     )
 
 
-async def get_advice(payload: dict, client: str = "unknown") -> dict:
+async def get_advice(payload: dict, client: str = "unknown", use_ai: bool = True) -> dict:
     """Advice plus where it came from. Never raises: the rules are the safety net.
 
     `note` is shown to the user, so it only ever holds one of the fixed messages
@@ -194,6 +194,8 @@ async def get_advice(payload: dict, client: str = "unknown") -> dict:
     """
     if not ai_enabled():
         note = "ШІ-порадника вимкнено"
+    elif not use_ai:
+        note = "план від Claude доступний за кодом доступу"
     elif (exhausted := quota.reserve(client)) is not None:
         note = ("вичерпано денний ліміт запитів до моделі" if exhausted == "service"
                 else "ви вичерпали свій денний ліміт запитів до моделі")

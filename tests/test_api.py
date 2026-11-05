@@ -213,3 +213,29 @@ def test_unbilled_failures_do_not_consume_the_budget(client, upstream, monkeypat
     for _ in range(3):
         assert "з'єднання" in client.post("/api/advice", json=STATION).json()["note"]
     assert advisor.quota.reserve("someone") is None             # the single slot is still free
+
+
+def test_access_code_gates_the_paid_model(client, upstream, monkeypatch):
+    monkeypatch.setenv("SOLARCAST_AI", "on")
+    monkeypatch.setenv("SOLARCAST_ACCESS_TOKEN", "s3cret-code")
+    messages = _StubMessages(result=_Response(_advice()))
+    monkeypatch.setattr(advisor, "_client", _StubClient(messages))
+
+    assert client.get("/api/health").json()["ai_requires_code"] is True
+    anonymous = client.post("/api/advice", json=STATION)
+    assert anonymous.status_code == 200 and anonymous.json()["source"] == "rules"
+    assert "код" in anonymous.json()["note"] and messages.calls == 0        # nothing was spent
+
+    wrong = client.post("/api/advice", json=STATION, headers={"X-Access-Token": "guess"})
+    assert wrong.status_code == 401 and messages.calls == 0
+
+    ok = client.post("/api/advice", json=STATION, headers={"X-Access-Token": "s3cret-code"})
+    assert ok.json()["source"] == "claude" and messages.calls == 1
+
+
+def test_without_a_configured_code_the_model_is_open(client, upstream, monkeypatch):
+    monkeypatch.setenv("SOLARCAST_AI", "on")
+    monkeypatch.delenv("SOLARCAST_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr(advisor, "_client", _StubClient(_StubMessages(result=_Response(_advice()))))
+    assert client.get("/api/health").json()["ai_requires_code"] is False
+    assert client.post("/api/advice", json=STATION).json()["source"] == "claude"

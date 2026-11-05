@@ -152,6 +152,8 @@ button.ghost:disabled { opacity: .6; cursor: progress; }
 .advice h4 { font: 600 15px var(--body); margin: 16px 0 2px; }
 .warn li { padding-left: 14px; border-left: 3px solid var(--warning); border-top: 0; margin-top: 8px; }
 .source { color: var(--ink-3); font-size: 14px; margin: 0; }
+.plan-tools { display: flex; gap: 8px; align-items: center; }
+.plan-tools input { width: 150px; font: inherit; font-size: 14px; color: inherit; background: var(--surface); border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; }
 .muted { color: var(--ink-3); }
 .error { color: var(--critical); font-weight: 500; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -222,6 +224,13 @@ const asDate = iso => new Date(iso + 'T12:00:00');
 const cap = s => s[0].toUpperCase() + s.slice(1);
 const RATE = { good: 'добрий', medium: 'середній', poor: 'слабкий' };
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// The access code for the Claude-written plan lives in this browser only.
+// Opening the site as /#key=<code> stores it; a fragment is never sent to the server.
+function getCode() { try { return localStorage.getItem('solarcast.code') || ''; } catch { return ''; } }
+function setCode(v) { try { v ? localStorage.setItem('solarcast.code', v) : localStorage.removeItem('solarcast.code'); } catch {} }
+const hashKey = new URLSearchParams(location.hash.slice(1)).get('key');
+if (hashKey) { setCode(hashKey); history.replaceState(null, '', location.pathname + location.search); }
 
 const state = { loc: { name: 'Київ', lat: 50.45466, lon: 30.5238 }, data: null, day: 0 };
 
@@ -319,9 +328,12 @@ function render() {
     <section class="block">
       <div class="plan-head">
         <h2>План на тиждень</h2>
-        <button class="ghost" id="adviceBtn" type="button">Скласти план</button>
+        <div class="plan-tools">
+          ${state.needCode ? `<input id="code" type="password" autocomplete="off" placeholder="Код доступу" aria-label="Код доступу для плану від Claude" value="${esc(getCode())}">` : ''}
+          <button class="ghost" id="adviceBtn" type="button">Скласти план</button>
+        </div>
       </div>
-      <div class="advice" id="advice"><p class="muted">Порадник пояснить простими словами, коли заряджати акумулятор і вмикати енергоємні прилади.</p></div>
+      <div class="advice" id="advice"><p class="muted">Порадник пояснить простими словами, коли заряджати акумулятор і вмикати енергоємні прилади.${state.needCode ? ' З кодом доступу план складає Claude, без коду його складають прості правила.' : ''}</p></div>
     </section>`;
   drawBars(); drawHours(); drawTable();
   $('#adviceBtn').addEventListener('click', loadAdvice);
@@ -452,13 +464,17 @@ function drawTable() {
 /* ---------- advice ---------- */
 async function loadAdvice() {
   const btn = $('#adviceBtn'), box = $('#advice');
+  const code = ($('#code')?.value ?? getCode()).trim();
   btn.disabled = true; btn.textContent = 'Складаю план…';
   box.innerHTML = '<p class="muted">Складаю план…</p>';
   try {
     const r = await fetch('/api/advice', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(code ? { 'X-Access-Token': code } : {}) },
       body: JSON.stringify(state.station),
     });
+    if (r.status === 401) { setCode(''); throw new Error('Невірний код доступу. Перевірте його і спробуйте ще раз.'); }
+    setCode(code);
     if (r.status === 429) throw new Error('Забагато запитів плану. Спробуйте за кілька хвилин.');
     if (!r.ok) throw new Error('Не вдалося скласти план. Спробуйте ще раз.');
     const res = await r.json(), a = res.advice;
@@ -485,7 +501,7 @@ addEventListener('resize', () => {
   resizeTimer = setTimeout(() => { if (state.data && $('#bars')) { drawBars(); drawHours(); } }, 150);
 });
 
-load();
+fetch('/api/health').then(r => r.json()).then(h => { state.needCode = !!h.ai_requires_code; }).catch(() => {}).finally(load);
 </script>
 </body>
 </html>

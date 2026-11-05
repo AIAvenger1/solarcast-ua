@@ -6,6 +6,7 @@
 
 Uses the installed Google Chrome (no browser download) and ffmpeg for the mp4.
 """
+import os
 import shutil
 import subprocess
 import sys
@@ -38,7 +39,8 @@ def main():
         # ---- the walkthrough, recorded ----
         ctx = browser.new_context(viewport=SIZE, record_video_dir=str(RAW), record_video_size=SIZE, locale="uk-UA")
         page = ctx.new_page()
-        page.goto(URL)
+        code = os.environ.get("SOLARCAST_ACCESS_TOKEN", "")
+        page.goto(URL + (f"#key={code}" if code else ""))      # unlocks the Claude-written plan
         page.wait_for_selector("#bars svg")
         pause(page, 2500)                                   # Kyiv forecast, loaded on start
         page.screenshot(path=str(DOCS / "main.png"), full_page=True)

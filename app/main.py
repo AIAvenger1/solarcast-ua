@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import hmac
+import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -38,7 +40,8 @@ app = FastAPI(title="SolarCast UA", version="0.1.0", lifespan=lifespan)
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "ai_enabled": advisor.ai_enabled(), "cache": openmeteo.cache_stats()}
+    return {"status": "ok", "ai_enabled": advisor.ai_enabled(), "ai_requires_code": bool(access_code()),
+            "cache": openmeteo.cache_stats()}
 
 
 @app.get("/api/geocode")
@@ -106,15 +109,27 @@ ADVICE_WINDOW_S = 10 * 60
 advice_limiter = WindowLimiter(ADVICE_LIMIT, ADVICE_WINDOW_S)
 
 
+def access_code() -> str:
+    """Optional shared secret that unlocks the paid model on a public deployment."""
+    return os.environ.get("SOLARCAST_ACCESS_TOKEN", "").strip()
+
+
 @app.post("/api/advice")
 async def advice(request: Request, q: Station):
     client = request.client.host if request.client else "unknown"
+    # the limiter runs before the code check, so guessing the code is rate-limited too
     if not advice_limiter.allow(client):
         raise HTTPException(429, "Забагато запитів плану. Спробуйте за кілька хвилин.")
+    required, given = access_code(), request.headers.get("x-access-token", "").strip()
+    if required and given and not hmac.compare_digest(given.encode(), required.encode()):
+        raise HTTPException(401, "Невірний код доступу.")
+    # Without the code the visitor still gets a plan, built by the free rules.
+    use_ai = bool(given) if required else True
     # The forecast is recomputed here (Open-Meteo answers come from the cache), so the
     # model only ever receives numbers this service produced. Hourly data is left out.
     f = await compute(request, q)
-    return await advisor.get_advice({k: f[k] for k in ("location", "system", "days", "totals")}, client)
+    payload = {k: f[k] for k in ("location", "system", "days", "totals")}
+    return await advisor.get_advice(payload, client, use_ai=use_ai)
 
 
 @app.get("/")
