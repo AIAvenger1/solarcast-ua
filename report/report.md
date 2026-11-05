@@ -1,3 +1,7 @@
+Сервіс: https://solarcast.trelawney.tech
+
+Вихідний код: https://github.com/AIAvenger1/solarcast-ua
+
 # 1. Суть проєкту та де його можна використовувати
 
 SolarCast UA — вебсервіс, який прогнозує, скільки електроенергії дасть домашня
