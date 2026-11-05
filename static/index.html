@@ -272,16 +272,17 @@ async function load() {
     city.focus(); return;
   }
   go.disabled = true; go.textContent = 'Рахую…';
-  const q = new URLSearchParams({
+  const station = {
     lat: state.loc.lat, lon: state.loc.lon, name: state.loc.name,
-    kwp: $('#kwp').value, tilt: $('#tilt').value, azimuth: $('#azimuth').value,
-    losses: $('#losses').value, battery_kwh: $('#battery').value || 0, tariff: $('#tariff').value,
-  });
+    kwp: +$('#kwp').value, tilt: +$('#tilt').value, azimuth: +$('#azimuth').value,
+    losses: +$('#losses').value, battery_kwh: +$('#battery').value || 0, tariff: +$('#tariff').value,
+  };
   try {
-    const r = await fetch('/api/forecast?' + q);
+    const r = await fetch('/api/forecast?' + new URLSearchParams(station));
     const body = await r.json();
     if (!r.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Перевірте значення у формі.');
     state.data = body;
+    state.station = station;       // the plan is requested for exactly this station
     state.day = body.days.findIndex(d => d.date === body.totals.best_day);
     render();
   } catch (err) {
@@ -450,15 +451,16 @@ function drawTable() {
 
 /* ---------- advice ---------- */
 async function loadAdvice() {
-  const btn = $('#adviceBtn'), box = $('#advice'), d = state.data;
+  const btn = $('#adviceBtn'), box = $('#advice');
   btn.disabled = true; btn.textContent = 'Складаю план…';
   box.innerHTML = '<p class="muted">Складаю план…</p>';
   try {
     const r = await fetch('/api/advice', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location: d.location, system: d.system, days: d.days, totals: d.totals }),
+      body: JSON.stringify(state.station),
     });
-    if (!r.ok) throw new Error();
+    if (r.status === 429) throw new Error('Забагато запитів плану. Спробуйте за кілька хвилин.');
+    if (!r.ok) throw new Error('Не вдалося скласти план. Спробуйте ще раз.');
     const res = await r.json(), a = res.advice;
     box.innerHTML = `
       <h3>${esc(a.headline)}</h3>
@@ -471,8 +473,8 @@ async function loadAdvice() {
         ? 'План склав Claude Opus 5.5 за цим прогнозом.'
         : 'План складено за правилами, без ШІ: ' + esc(res.note) + '.'}</p>`;
     btn.textContent = 'Скласти заново';
-  } catch {
-    box.innerHTML = '<p class="error">Не вдалося скласти план. Спробуйте ще раз.</p>';
+  } catch (err) {
+    box.innerHTML = `<p class="error">${esc(err.message)}</p>`;
     btn.textContent = 'Скласти план';
   } finally { btn.disabled = false; }
 }

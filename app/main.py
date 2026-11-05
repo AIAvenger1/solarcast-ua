@@ -2,19 +2,23 @@
 
     GET  /api/geocode?q=Київ                      place search (Open-Meteo Geocoding API)
     GET  /api/forecast?lat=..&lon=..&kwp=..       7-day PV forecast (Open-Meteo Forecast API + PV model)
-    POST /api/advice                              plain-language plan (Claude API, rule-based fallback)
+    POST /api/advice  {station parameters}        plain-language plan (Claude API, rule-based fallback)
     GET  /api/health                              liveness + cache stats
 """
 from __future__ import annotations
 
+import re
+import time
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import advisor, openmeteo
 from .solar import System, build_forecast
@@ -46,52 +50,84 @@ async def geocode(request: Request, q: str = Query(min_length=2, max_length=80))
         raise HTTPException(502, str(e))
 
 
-@app.get("/api/forecast")
-async def forecast(
-    request: Request,
-    lat: float = Query(ge=-90, le=90),
-    lon: float = Query(ge=-180, le=180),
-    kwp: float = Query(gt=0, le=100, description="installed peak power, kWp"),
-    tilt: float = Query(35, ge=0, le=90, description="panel tilt, degrees from horizontal"),
-    azimuth: float = Query(0, ge=-180, le=180, description="0 = south, -90 = east, 90 = west"),
-    losses: float = Query(14, ge=0, le=50, description="system losses, %"),
-    battery_kwh: float = Query(0, ge=0, le=200),
-    tariff: float = Query(4.32, ge=0, le=100, description="UAH per kWh"),
-    name: str = Query("", max_length=120),
-):
+class Station(BaseModel):
+    """Everything the client may send: a place and the parameters of the PV system.
+
+    The same model is the query of GET /api/forecast and the body of POST /api/advice,
+    so the advisor never sees data the server did not compute itself.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    kwp: float = Field(gt=0, le=100, description="installed peak power, kWp")
+    tilt: float = Field(35, ge=0, le=90, description="panel tilt, degrees from horizontal")
+    azimuth: float = Field(0, ge=-180, le=180, description="0 = south, -90 = east, 90 = west")
+    losses: float = Field(14, ge=0, le=50, description="system losses, %")
+    battery_kwh: float = Field(0, ge=0, le=200)
+    tariff: float = Field(4.32, ge=0, le=100, description="UAH per kWh")
+    name: str = Field("", max_length=80)
+
+    @field_validator("name")
+    @classmethod
+    def plain_place_name(cls, v: str) -> str:
+        # The name is echoed in the UI and reaches the model prompt: keep letters,
+        # digits and ordinary punctuation only, so it cannot carry markup or instructions.
+        return re.sub(r"[^\w\s,.'’\-()]", "", v, flags=re.UNICODE).strip()
+
+
+async def compute(request: Request, q: Station) -> dict:
     try:
-        raw, cached = await openmeteo.forecast(request.app.state.http, lat, lon, tilt, azimuth)
+        raw, cached = await openmeteo.forecast(request.app.state.http, q.lat, q.lon, q.tilt, q.azimuth)
     except openmeteo.UpstreamError as e:
         raise HTTPException(502, str(e))
-    system = System(kwp=kwp, losses=losses / 100.0, battery_kwh=battery_kwh, tariff=tariff)
-    result = build_forecast(system, raw)
+    system = System(kwp=q.kwp, losses=q.losses / 100.0, battery_kwh=q.battery_kwh, tariff=q.tariff)
     return {
         "location": {
-            "name": name or f"{lat:.2f}, {lon:.2f}",
+            "name": q.name or f"{q.lat:.2f}, {q.lon:.2f}",
             "lat": raw["latitude"], "lon": raw["longitude"],
             "timezone": raw.get("timezone"), "elevation": raw.get("elevation"),
         },
-        "system": {"kwp": kwp, "tilt": tilt, "azimuth": azimuth, "losses_pct": losses,
-                   "battery_kwh": battery_kwh, "tariff": tariff},
+        "system": {"kwp": q.kwp, "tilt": q.tilt, "azimuth": q.azimuth, "losses_pct": q.losses,
+                   "battery_kwh": q.battery_kwh, "tariff": q.tariff},
         "source": {"provider": "Open-Meteo", "cached": cached},
-        **result,
+        **build_forecast(system, raw),
     }
 
 
-class AdviceRequest(BaseModel):
-    """The parts of a forecast the advisor needs (hourly data is left out on purpose)."""
-    location: dict
-    system: dict
-    days: list[dict] = Field(min_length=1, max_length=16)
-    totals: dict
+@app.get("/api/forecast")
+async def forecast(request: Request, q: Annotated[Station, Query()]):
+    return await compute(request, q)
+
+
+# /api/advice can spend money on the model, so it is rate-limited per client address.
+# (In-memory and per-process: enough for a PoC; behind a proxy use the forwarded address
+# and a shared store.)
+ADVICE_LIMIT = 6
+ADVICE_WINDOW_S = 10 * 60
+_advice_calls: dict[str, deque] = defaultdict(deque)
+
+
+def check_rate_limit(client_ip: str) -> None:
+    now = time.monotonic()
+    calls = _advice_calls[client_ip]
+    while calls and now - calls[0] > ADVICE_WINDOW_S:
+        calls.popleft()
+    if len(calls) >= ADVICE_LIMIT:
+        raise HTTPException(429, "Забагато запитів плану. Спробуйте за кілька хвилин.")
+    calls.append(now)
+    if len(_advice_calls) > 10_000:      # forget idle clients, keep the table bounded
+        for ip in [ip for ip, c in _advice_calls.items() if not c or now - c[-1] > ADVICE_WINDOW_S]:
+            del _advice_calls[ip]
 
 
 @app.post("/api/advice")
-async def advice(body: AdviceRequest):
-    try:
-        return await advisor.get_advice(body.model_dump())
-    except (KeyError, ValueError, IndexError) as e:
-        raise HTTPException(422, f"некоректні дані прогнозу: {e}")
+async def advice(request: Request, q: Station):
+    check_rate_limit(request.client.host if request.client else "unknown")
+    # The forecast is recomputed here (Open-Meteo answers come from the cache), so the
+    # model only ever receives numbers this service produced. Hourly data is left out.
+    f = await compute(request, q)
+    return await advisor.get_advice({k: f[k] for k in ("location", "system", "days", "totals")})
 
 
 @app.get("/")

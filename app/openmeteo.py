@@ -17,6 +17,7 @@ import httpx
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 CACHE_TTL_S = 15 * 60
+CACHE_MAX_ENTRIES = 512
 TIMEOUT_S = 15.0
 
 HOURLY = "global_tilted_irradiance,temperature_2m,cloud_cover"
@@ -31,7 +32,18 @@ _cache: dict[tuple, tuple[float, dict]] = {}
 
 
 def cache_stats() -> dict:
-    return {"entries": len(_cache), "ttl_s": CACHE_TTL_S}
+    return {"entries": len(_cache), "max_entries": CACHE_MAX_ENTRIES, "ttl_s": CACHE_TTL_S}
+
+
+def _store(key: tuple, data: dict) -> None:
+    """Insert with a hard size bound: drop expired entries first, then the oldest."""
+    now = time.monotonic()
+    if len(_cache) >= CACHE_MAX_ENTRIES:
+        for k in [k for k, (t, _) in _cache.items() if now - t >= CACHE_TTL_S]:
+            del _cache[k]
+        while len(_cache) >= CACHE_MAX_ENTRIES:
+            del _cache[min(_cache, key=lambda k: _cache[k][0])]
+    _cache[key] = (now, data)
 
 
 async def _get(client: httpx.AsyncClient, url: str, params: dict) -> tuple[dict, bool]:
@@ -53,13 +65,14 @@ async def _get(client: httpx.AsyncClient, url: str, params: dict) -> tuple[dict,
         raise UpstreamError(f"Open-Meteo {e.response.status_code}: {reason}".strip()) from e
     except (httpx.HTTPError, ValueError) as e:
         raise UpstreamError(f"Open-Meteo недоступний: {type(e).__name__}") from e
-    _cache[key] = (time.monotonic(), data)
+    _store(key, data)
     return data, False
 
 
 async def geocode(client: httpx.AsyncClient, query: str, count: int = 6) -> list[dict]:
     data, _ = await _get(client, GEOCODING_URL, {
-        "name": query, "count": count, "language": "uk", "format": "json",
+        # casefold so "Київ" and "київ" share one cache entry
+        "name": query.strip().casefold()[:80], "count": count, "language": "uk", "format": "json",
     })
     return [
         {
@@ -83,6 +96,7 @@ async def forecast(client: httpx.AsyncClient, lat: float, lon: float,
         # nearby requests share one cache entry
         "latitude": round(lat, 2), "longitude": round(lon, 2),
         "hourly": HOURLY, "daily": DAILY,
-        "tilt": tilt, "azimuth": azimuth,
+        # whole degrees: keeps the cache key space finite, and no roof is measured finer
+        "tilt": round(tilt), "azimuth": round(azimuth),
         "timezone": "auto", "forecast_days": days,
     })

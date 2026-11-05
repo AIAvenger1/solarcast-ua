@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import date as _date
 from typing import Literal
 
 import anthropic
@@ -24,6 +25,19 @@ MODEL = "claude-opus-5-5"
 # the API re-runs it on the model Anthropic recommends for that category.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 TIMEOUT_S = 60.0
+# Hard ceiling on paid model calls per day for the whole service; past it the rules answer.
+DAILY_AI_CALLS = int(os.environ.get("SOLARCAST_AI_DAILY_CALLS", "300"))
+_ai_calls = {"day": None, "count": 0}
+
+
+def _within_daily_budget() -> bool:
+    today = _date.today()
+    if _ai_calls["day"] != today:
+        _ai_calls.update(day=today, count=0)
+    if _ai_calls["count"] >= DAILY_AI_CALLS:
+        return False
+    _ai_calls["count"] += 1
+    return True
 
 Verdict = Literal["good", "medium", "poor"]
 
@@ -110,7 +124,6 @@ WEEKDAYS = ["понеділок", "вівторок", "середа", "четв�
 
 
 def _weekday(date: str) -> str:
-    from datetime import date as _date
     return WEEKDAYS[_date.fromisoformat(date).weekday()]
 
 
@@ -175,17 +188,26 @@ def rule_advice(payload: dict) -> Advice:
 
 
 async def get_advice(payload: dict) -> dict:
-    """Advice plus where it came from. Never raises: the rules are the safety net."""
-    if ai_enabled():
+    """Advice plus where it came from. Never raises: the rules are the safety net.
+
+    `note` is shown to the user, so it only ever holds one of the fixed messages
+    below; exception details go to the server log.
+    """
+    if not ai_enabled():
+        note = "ШІ-порадника вимкнено"
+    elif not _within_daily_budget():
+        note = "вичерпано денний ліміт запитів до моделі"
+    else:
         try:
             advice = await ai_advice(payload)
             return {"source": "claude", "model": MODEL, "note": None, "advice": advice.model_dump()}
         except anthropic.AuthenticationError:
-            note = "немає чинних облікових даних Claude API"
+            note = "ключ Claude API недійсний"
         except anthropic.RateLimitError:
             note = "перевищено ліміт запитів Claude API"
         except anthropic.APIStatusError as e:
-            note = f"Claude API повернув помилку {e.status_code}"
+            log.warning("Claude API status error %s", e.status_code)
+            note = "Claude API тимчасово недоступний"
         except anthropic.APIConnectionError:
             note = "немає з'єднання з Claude API"
         except Exception as e:
@@ -193,8 +215,7 @@ async def get_advice(payload: dict) -> dict:
             if "authentication method" in str(e):
                 note = "не задано ключ Claude API (змінна ANTHROPIC_API_KEY)"
             else:
-                note = str(e) or type(e).__name__
+                log.exception("AI advice failed")
+                note = "ШІ-порадник тимчасово недоступний"
         log.warning("AI advice unavailable, using rules: %s", note)
-    else:
-        note = "ШІ-порадника вимкнено (SOLARCAST_AI=off)"
     return {"source": "rules", "model": None, "note": note, "advice": rule_advice(payload).model_dump()}
