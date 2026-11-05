@@ -8,7 +8,7 @@ PoC-проєкт з інтеграцією хмарних API та API моде�
 
 Працює тут: https://solarcast.trelawney.tech
 
-Звіт: [`report/report.pdf`](report/report.pdf).
+Звіт: [`report/report.pdf`](report/report.pdf). Презентація: [`presentation/solarcast-ua.pptx`](presentation/solarcast-ua.pptx).
 
 Демо-відео: [`docs/demo.mp4`](docs/demo.mp4) (50 с), записане з розгорнутого в хмарі сервісу; план у ньому складає Claude.
 
